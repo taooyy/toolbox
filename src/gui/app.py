@@ -269,8 +269,13 @@ class App(ctk.CTk):
         mid.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
         ctk.CTkLabel(mid, text="转换配置", font=("", 14, "bold")).pack(pady=15)
         ctk.CTkLabel(mid, text="生成尺寸:", text_color="gray").pack(anchor="w", padx=20)
-        self.cb_vals = ["标准多尺寸 (推荐)", "256x256", "128x128", "64x64", "48x48", "32x32", "16x16",
-                        "自定义 (手动输入)"]
+        # === [修改] 在这里添加 "转换/导出为 SVG" 选项 ===
+        self.cb_vals = [
+            "标准多尺寸 (推荐)",
+            "转换/导出为 SVG",  # <--- 新增项
+            "256x256", "128x128", "64x64", "48x48", "32x32", "16x16",
+            "自定义 (手动输入)"
+        ]
         self.cb_size = ttk.Combobox(mid, values=self.cb_vals, state="readonly")
         self.cb_size.pack(fill="x", padx=20, pady=5)
         self.cb_size.set("标准多尺寸 (推荐)")
@@ -336,7 +341,8 @@ class App(ctk.CTk):
         if not os.path.exists(out_dir):
             self.lst_out.insert("end", "输出目录不存在")
             return
-        files = [f for f in os.listdir(out_dir) if f.lower().endswith(".ico")]
+        # === [修改] 增加 .svg 到文件过滤器 ===
+        files = [f for f in os.listdir(out_dir) if f.lower().endswith((".ico", ".svg"))]
         files.sort(key=lambda x: os.path.getmtime(os.path.join(out_dir, x)), reverse=True)
         for f in files: self.lst_out.insert("end", f)
 
@@ -346,14 +352,43 @@ class App(ctk.CTk):
         fname = self.lst_out.get(sel)
         fpath = os.path.join(self.config["icon_output_path"], fname)
 
+        # === 1. 准备数据 (先不操作 UI) ===
+        new_img = None
+        msg_text = ""
+
+        # SVG 处理
+        if fname.lower().endswith(".svg"):
+            msg_text = "SVG 矢量图\n(请在浏览器中查看)"
+        # 图片处理
+        else:
+            try:
+                pil_img = Image.open(fpath)
+                pil_img.thumbnail((128, 128))
+                # 创建 CTkImage
+                new_img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=pil_img.size)
+            except Exception:
+                msg_text = "预览失败\n(文件可能损坏)"
+
+        # === 2. 更新全局引用 (防止垃圾回收) ===
+        # 这一步非常重要，必须在 UI 更新前完成
+        self.current_preview_img = new_img
+
+        # === 3. 安全更新 UI (重建策略) ===
         try:
-            img = Image.open(fpath)
-            img.thumbnail((128, 128))
-            ctk_img = ctk.CTkImage(img, size=img.size)
-            self.current_preview_img = ctk_img
-            self.lbl_preview_img.configure(image=ctk_img, text="")
+            # 尝试正常更新（大多数时候走这里）
+            self.lbl_preview_img.configure(image=new_img, text=msg_text)
         except Exception:
-            self.lbl_preview_img.configure(image=None, text="预览失败")
+            # !!! 这里的 Exception 就是你遇到的 "pyimage1 doesn't exist" !!!
+            # 如果控件已经损坏，不要试图修复它，直接销毁并重建
+            try:
+                self.lbl_preview_img.destroy()
+            except:
+                pass
+
+            # 原地创建一个新的 Label
+            self.lbl_preview_img = ctk.CTkLabel(self.preview_box, text=msg_text, image=new_img)
+            # 恢复布局位置 (必须与 _ui_icon 中的布局一致)
+            self.lbl_preview_img.place(relx=0.5, rely=0.5, anchor="center")
 
     def log_i(self, m, l):
         self.after(0, lambda: self.lbl_i_status.configure(text=m))
