@@ -4,6 +4,7 @@ from tkinter import filedialog, Listbox, ttk, messagebox
 from datetime import datetime
 import customtkinter as ctk
 from PIL import Image
+from src.gui.prompt_panel import PromptPanel
 
 # === 设置窗口图标 (防止开发环境报错) ===
 try:
@@ -22,8 +23,8 @@ from src.core.json_engine import JsonEngine
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("全能工具箱 - 生产力增强版")
-        self.geometry("1100x850")
+        self.title("全能工具箱")
+        self.geometry("650x500")
         ctk.set_appearance_mode("Light")
 
         # 1. 加载配置
@@ -59,6 +60,8 @@ class App(ctk.CTk):
         self.btn_nav_unpack = self._nav_btn("解压专家", "unpack")
         self.btn_nav_icon = self._nav_btn("图片转Icon", "icon")
         self.btn_nav_json = self._nav_btn("JSON工厂", "json")
+        # [新增] 抽卡机按钮
+        self.btn_nav_prompt = self._nav_btn("AI 提示词抽卡", "prompt")
         self.btn_nav_setting = self._nav_btn("全局设置", "setting")
 
         # === 主区域 Main Area ===
@@ -72,6 +75,8 @@ class App(ctk.CTk):
         self.frame_icon = self._ui_icon()
         self.frame_json = self._ui_json()
         self.frame_setting = self._ui_setting()
+        # [新增] 预加载 Prompt Frame
+        self.frame_prompt = self._ui_prompt()
 
     def _nav_btn(self, text, tag):
         btn = ctk.CTkButton(self.sidebar, text=text, height=45, fg_color="transparent",
@@ -82,11 +87,14 @@ class App(ctk.CTk):
 
     def switch_tab(self, tag):
         # 隐藏所有页面
-        for f in [self.frame_unpack, self.frame_icon, self.frame_setting, self.frame_json]:
+        # [修改] 增加 frame_prompt
+        for f in [self.frame_unpack, self.frame_icon, self.frame_setting, self.frame_json, self.frame_prompt]:
             f.grid_forget()
 
         # 重置按钮样式
-        for b in [self.btn_nav_unpack, self.btn_nav_icon, self.btn_nav_setting, self.btn_nav_json]:
+        # [修改] 增加 btn_nav_prompt
+        for b in [self.btn_nav_unpack, self.btn_nav_icon, self.btn_nav_setting, self.btn_nav_json,
+                    self.btn_nav_prompt]:
             b.configure(fg_color="transparent")
 
         # 显示选中页面并高亮按钮
@@ -100,6 +108,11 @@ class App(ctk.CTk):
         elif tag == "json":
             self.frame_json.grid(row=0, column=0, sticky="nsew")
             self.btn_nav_json.configure(fg_color=("gray85", "gray30"))
+        elif tag == "prompt":  # [新增]
+            self.frame_prompt.grid(row=0, column=0, sticky="nsew")
+            self.btn_nav_prompt.configure(fg_color=("gray85", "gray30"))
+            # 切换到此 Tab 时，让 prompt panel 获取焦点，以便快捷键生效
+            self.frame_prompt.focus_set()
         elif tag == "setting":
             self.frame_setting.grid(row=0, column=0, sticky="nsew")
             self.btn_nav_setting.configure(fg_color=("gray85", "gray30"))
@@ -247,70 +260,130 @@ class App(ctk.CTk):
     # Tab 2: 图片转 Icon
     # =========================================================================
     def _ui_icon(self):
+        """
+        [界面重构] 图片转 Icon 页面 (响应式按钮版)
+        Row 2: 采用 Grid 布局，按钮宽度随窗口自适应
+        """
         frame = ctk.CTkFrame(self.main_area, fg_color="transparent")
-        frame.grid_columnconfigure((0, 1, 2), weight=1, uniform="icon_cols")
-        frame.grid_rowconfigure(0, weight=1)
 
-        # 左栏
-        left = ctk.CTkFrame(frame)
-        left.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
-        ctk.CTkLabel(left, text="待处理图片", font=("", 14, "bold")).pack(pady=10)
-        self.lst_icon = Listbox(left, bd=0, highlightthickness=0, font=("", 10), selectbackground="#3B8ED0")
-        self.lst_icon.pack(fill="both", expand=True, padx=5, pady=5)
-        btns = ctk.CTkFrame(left, fg_color="transparent")
-        btns.pack(fill="x", pady=5)
-        ctk.CTkButton(btns, text="➕ 添加", width=80, command=self.add_imgs).pack(side="left", padx=5)
-        ctk.CTkButton(btns, text="🗑️ 清空", width=60, fg_color="gray",
+        # === 主网格配置 ===
+        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_rowconfigure(0, weight=1)  # Row 1: Input List (Expand)
+        frame.grid_rowconfigure(1, weight=0)  # Row 2: Settings (Fixed Height)
+        frame.grid_rowconfigure(2, weight=1)  # Row 3: Output (Expand)
+
+        # =====================================================
+        # 1. 第一行：待处理图片
+        # =====================================================
+        row1 = ctk.CTkFrame(frame)
+        row1.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        row1.grid_columnconfigure(0, weight=1)
+        row1.grid_rowconfigure(1, weight=1)
+
+        # 1.1 顶部工具条
+        r1_bar = ctk.CTkFrame(row1, fg_color="transparent")
+        r1_bar.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 5))
+
+        ctk.CTkLabel(r1_bar, text="📥 待处理图片", font=("", 14, "bold")).pack(side="left")
+
+        ctk.CTkButton(r1_bar, text="🗑️ 清空列表", width=80, height=28, fg_color="#FF4D4D", hover_color="#D63031",
                       command=lambda: [self.lst_icon.delete(0, "end"), self.icon_files.clear()]).pack(side="right",
                                                                                                       padx=5)
+        ctk.CTkButton(r1_bar, text="➕ 添加图片", width=100, height=28, fg_color="#3B8ED0",
+                      command=self.add_imgs).pack(side="right", padx=5)
 
-        # 中栏
-        mid = ctk.CTkFrame(frame)
-        mid.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
-        ctk.CTkLabel(mid, text="转换配置", font=("", 14, "bold")).pack(pady=15)
-        ctk.CTkLabel(mid, text="生成尺寸:", text_color="gray").pack(anchor="w", padx=20)
-        # === [修改] 在这里添加 "转换/导出为 SVG" 选项 ===
+        # 1.2 输入列表
+        self.lst_icon = Listbox(row1, bd=0, highlightthickness=0, font=("Consolas", 10), selectbackground="#3B8ED0")
+        self.lst_icon.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+
+        # =====================================================
+        # 2. 第二行：配置与控制 (Grid 响应式布局)
+        # =====================================================
+        row2 = ctk.CTkFrame(frame)
+        row2.grid(row=1, column=0, sticky="ew", padx=5, pady=5)
+
+        # [关键修改] 设置列权重：左侧配置区占4份，右侧按钮占1份
+        # 这样当窗口变宽时，按钮也会按比例变宽
+        row2.grid_columnconfigure(0, weight=4)
+        row2.grid_columnconfigure(1, weight=1)
+        row2.grid_rowconfigure(0, weight=1)
+
+        # 2.1 左侧：配置项 (Grid Column 0)
+        cfg_panel = ctk.CTkFrame(row2, fg_color="transparent")
+        cfg_panel.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+
+        # 第一排：尺寸设置
+        line1 = ctk.CTkFrame(cfg_panel, fg_color="transparent")
+        line1.pack(fill="x", pady=2)
+        ctk.CTkLabel(line1, text="生成尺寸:", text_color="gray", font=("", 12)).pack(side="left", padx=(0, 5))
+
         self.cb_vals = [
             "标准多尺寸 (推荐)",
-            "转换/导出为 SVG",  # <--- 新增项
+            "转换/导出为 SVG",
             "256x256", "128x128", "64x64", "48x48", "32x32", "16x16",
             "自定义 (手动输入)"
         ]
-        self.cb_size = ttk.Combobox(mid, values=self.cb_vals, state="readonly")
-        self.cb_size.pack(fill="x", padx=20, pady=5)
+        self.cb_size = ttk.Combobox(line1, values=self.cb_vals, state="readonly", width=18)
+        self.cb_size.pack(side="left", padx=5)
         self.cb_size.set("标准多尺寸 (推荐)")
         self.cb_size.bind("<<ComboboxSelected>>", self._on_icon_combo)
 
-        self.entry_i_cust = ctk.CTkEntry(mid, placeholder_text="输入数字 px")
-        self.entry_i_cust.pack(fill="x", padx=20, pady=(5, 15))
+        self.entry_i_cust = ctk.CTkEntry(line1, placeholder_text="px", width=60, height=28)
+        self.entry_i_cust.pack(side="left", padx=5)
         self.entry_i_cust.configure(state="disabled")
 
+        # [已修复] 变量初始化
         self.var_crop = ctk.BooleanVar(value=True)
-        ctk.CTkCheckBox(mid, text="智能居中裁剪", variable=self.var_crop).pack(anchor="w", padx=20, pady=5)
+        ctk.CTkCheckBox(line1, text="智能居中裁剪", variable=self.var_crop, font=("", 12)).pack(side="left", padx=15)
 
-        ctk.CTkFrame(mid, height=2, fg_color="gray80").pack(fill="x", padx=10, pady=20)
-        self.lbl_i_status = ctk.CTkLabel(mid, text="等待开始...", text_color="gray")
-        self.lbl_i_status.pack(pady=5)
-        self.bar_i = ctk.CTkProgressBar(mid)
+        # 第二排：进度条与状态
+        line2 = ctk.CTkFrame(cfg_panel, fg_color="transparent")
+        line2.pack(fill="x", pady=(8, 0))
+
+        self.bar_i = ctk.CTkProgressBar(line2, height=12)
         self.bar_i.set(0)
-        self.bar_i.pack(fill="x", padx=20, pady=5)
-        self.btn_i_run = ctk.CTkButton(mid, text="⚡ 开始转换", height=50, font=("", 14, "bold"), command=self.run_icon)
-        self.btn_i_run.pack(fill="x", padx=20, pady=20)
+        self.bar_i.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
-        # 右栏
-        right = ctk.CTkFrame(frame)
-        right.grid(row=0, column=2, sticky="nsew", padx=5, pady=5)
-        ctk.CTkLabel(right, text="结果预览", font=("", 14, "bold")).pack(pady=10)
-        self.preview_box = ctk.CTkFrame(right, height=150, fg_color=("gray90", "gray30"))
-        self.preview_box.pack(fill="x", padx=10, pady=5)
-        self.preview_box.pack_propagate(False)
-        self.lbl_preview_img = ctk.CTkLabel(self.preview_box, text="点击下方文件预览")
-        self.lbl_preview_img.place(relx=0.5, rely=0.5, anchor="center")
-        self.lst_out = Listbox(right, bd=0, highlightthickness=0, font=("", 9), selectbackground="#2CC985")
-        self.lst_out.pack(fill="both", expand=True, padx=10, pady=5)
+        self.lbl_i_status = ctk.CTkLabel(line2, text="准备就绪", text_color="gray", font=("", 11))
+        self.lbl_i_status.pack(side="left")
+
+        # 2.2 右侧：大按钮 (Grid Column 1)
+        # [关键修改] 移除固定 width，使用 sticky="ew" 水平填充
+        self.btn_i_run = ctk.CTkButton(row2, text="⚡ 开始转换", height=50,
+                                       fg_color="#2CC985", hover_color="#26AF73",
+                                       font=("", 15, "bold"), command=self.run_icon)
+        self.btn_i_run.grid(row=0, column=1, sticky="ew", padx=(0, 15), pady=15)
+
+        # =====================================================
+        # 3. 第三行：输出结果
+        # =====================================================
+        row3 = ctk.CTkFrame(frame)
+        row3.grid(row=2, column=0, sticky="nsew", padx=5, pady=5)
+        row3.grid_columnconfigure(0, weight=1)
+        row3.grid_rowconfigure(1, weight=1)
+
+        # 3.1 头部
+        r3_bar = ctk.CTkFrame(row3, fg_color="transparent")
+        r3_bar.grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=(10, 5))
+        ctk.CTkLabel(r3_bar, text="📤 结果预览", font=("", 14, "bold")).pack(side="left")
+        ctk.CTkButton(r3_bar, text="🔄 刷新", width=60, height=24, fg_color="transparent", border_width=1,
+                      text_color=("gray10", "gray90"), command=self._refresh_preview_list).pack(side="right")
+
+        # 3.2 左侧：输出列表
+        self.lst_out = Listbox(row3, bd=0, highlightthickness=0, font=("Consolas", 10), selectbackground="#2CC985")
+        self.lst_out.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
         self.lst_out.bind("<<ListboxSelect>>", self._on_preview_click)
-        ctk.CTkButton(right, text="🔄 刷新列表", height=30, fg_color="#3B8ED0", command=self._refresh_preview_list).pack(
-            fill="x", padx=10, pady=10)
+
+        # 3.3 右侧：预览图容器
+        preview_container = ctk.CTkFrame(row3, fg_color="transparent")
+        preview_container.grid(row=1, column=1, sticky="ns", padx=(0, 10), pady=(0, 10))
+
+        self.preview_box = ctk.CTkFrame(preview_container, width=160, height=160, fg_color=("gray90", "gray30"))
+        self.preview_box.pack(pady=0)
+        self.preview_box.pack_propagate(False)
+
+        self.lbl_preview_img = ctk.CTkLabel(self.preview_box, text="点击文件\n预览图标", font=("", 10))
+        self.lbl_preview_img.place(relx=0.5, rely=0.5, anchor="center")
 
         return frame
 
@@ -418,12 +491,19 @@ class App(ctk.CTk):
     # Tab 3: JSON 工厂 (新版: 批量输入 + 智能解析)
     # =========================================================================
     def _ui_json(self):
+        """
+        [最终修正版] JSON 工厂
+        1. 包含了您提供的所有按钮、提示文本(Hint)和布局细节。
+        2. 右侧面板升级为 ScrollableFrame，确保小屏幕下能滚动查看底部按钮。
+        """
         frame = ctk.CTkFrame(self.main_area, fg_color="transparent")
         frame.grid_columnconfigure(0, weight=3)  # 左侧预览占宽
         frame.grid_columnconfigure(1, weight=1)  # 右侧操作占窄
         frame.grid_rowconfigure(0, weight=1)
 
-        # === 左侧：预览区域 ===
+        # =====================================================
+        # 左侧：预览区域 (完全保持您提供的代码)
+        # =====================================================
         left_panel = ctk.CTkFrame(frame, fg_color="transparent")
         left_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
 
@@ -432,7 +512,7 @@ class App(ctk.CTk):
         toolbar.pack(fill="x", pady=(0, 10))
         ctk.CTkButton(toolbar, text="📄 新建", width=60, fg_color="gray", command=self.json_new).pack(side="left",
                                                                                                      padx=5, pady=5)
-        ctk.CTkButton(toolbar, text="📂 打开 JSON", width=100, command=self.json_open).pack(side="left", padx=5)
+        ctk.CTkButton(toolbar, text="📂 打开", width=60, command=self.json_open).pack(side="left", padx=5)
         ctk.CTkButton(toolbar, text="💾 保存", width=60, fg_color="#2CC985", command=self.json_save).pack(side="left",
                                                                                                          padx=5)
         self.lbl_j_path = ctk.CTkLabel(toolbar, text="未打开文件", text_color="gray")
@@ -467,19 +547,30 @@ class App(ctk.CTk):
         self.lbl_j_status = ctk.CTkLabel(left_panel, text="准备就绪", anchor="w", text_color="gray")
         self.lbl_j_status.pack(fill="x", pady=5)
 
-        # === 右侧：操作面板 ===
-        right_panel = ctk.CTkFrame(frame)
+        # =====================================================
+        # 右侧：操作面板 (升级为 ScrollableFrame 以支持滚动)
+        # =====================================================
+        # [修改点] 这里改为 CTkScrollableFrame
+        right_panel = ctk.CTkScrollableFrame(frame, label_text="🛠️ 操作面板")
         right_panel.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
 
+        # 辅助函数：模拟 _grp_box (防止 self._grp_box 未定义或布局不兼容)
+        def create_group_box(parent, title):
+            grp = ctk.CTkFrame(parent)
+            grp.pack(fill="x", pady=5, padx=5)
+            ctk.CTkLabel(grp, text=title, font=("", 13, "bold"), anchor="w").pack(fill="x", padx=10, pady=5)
+            return grp
+
         # 1. 批量新建类型
-        grp1 = self._grp_box(right_panel, "1. 批量新建类型")
+        grp1 = create_group_box(right_panel, "1. 批量新建类型")
+
         self.txt_j_types = ctk.CTkTextbox(grp1, height=60, font=("", 12))
         self.txt_j_types.pack(fill="x", padx=10, pady=5)
         self.txt_j_types.insert("1.0", "类型1, 类型2")
         ctk.CTkButton(grp1, text="➕ 批量添加", height=30, command=self.json_add_types).pack(fill="x", padx=10, pady=5)
 
         # 2. 批量数据录入
-        grp2 = self._grp_box(right_panel, "2. 批量数据录入")
+        grp2 = create_group_box(right_panel, "2. 批量录入")
 
         self.entry_j_type = ctk.CTkEntry(grp2, placeholder_text="在此输入或从左侧选择类型")
         self.entry_j_type.pack(fill="x", padx=10, pady=(5, 0))
@@ -490,17 +581,15 @@ class App(ctk.CTk):
                                   variable=self.var_double_line, font=("", 11))
         cb_mode.pack(anchor="w", padx=15, pady=5)
 
+        # [恢复漏掉的 Hint]
         hint = (
             "默认模式: 自动识别 冒号/等号/逗号 (Key:Value)\n"
             "双行模式: 专门用于处理 Prompt 等长文本\n"
             "   第一行: 名称 (Key)\n"
             "   第二行: 内容 (Value)"
         )
-
-
-        ctk.CTkLabel(grp2, text=hint, font=("Consolas", 11), text_color="gray", justify="left").pack(anchor="w",padx=15, pady=5)
-
-
+        ctk.CTkLabel(grp2, text=hint, font=("Consolas", 11), text_color="gray", justify="left").pack(anchor="w",
+                                                                                                     padx=15, pady=5)
 
         self.txt_j_data = ctk.CTkTextbox(grp2, height=150, font=("Consolas", 11))
         self.txt_j_data.pack(fill="x", padx=10, pady=5)
@@ -508,17 +597,19 @@ class App(ctk.CTk):
         demo_text = "普通模式示例:\nkey1: value1\nkey2=value2\n\n双行模式示例(需勾选上方):\n角色名\n{{tag1, tag2, tag3}}\n服装\nwhite dress, blue bow"
         self.txt_j_data.insert("1.0", demo_text)
 
+        # [恢复漏掉的按钮布局]
         btn_row = ctk.CTkFrame(grp2, fg_color="transparent")
         btn_row.pack(fill="x", padx=5, pady=5)
-        ctk.CTkButton(btn_row, text="💾 批量添加/更新", width=80, fg_color="#3B8ED0",
+        ctk.CTkButton(btn_row, text="批量添加", width=60, fg_color="#3B8ED0",
                       command=self.json_run_batch).pack(side="left", padx=5, expand=True)
-        ctk.CTkButton(btn_row, text="🗑️ 删除选中项", width=80, fg_color="#FF4D4D",
+        ctk.CTkButton(btn_row, text="删除", width=60, fg_color="#FF4D4D",
                       command=self.json_del).pack(side="left", padx=5, expand=True)
 
         # 3. 高级操作
-        grp3 = self._grp_box(right_panel, "3. 高级操作")
+        grp3 = create_group_box(right_panel, "3. 高级操作")
+        # [恢复漏掉的说明文本]
         ctk.CTkLabel(grp3, text="将指定类型下的 Key 和 Value 互换", font=("", 10), text_color="gray").pack(pady=(0, 5))
-        ctk.CTkButton(grp3, text="🔄 交换键值对 (当前类型)", fg_color="#E1AD01", command=self.json_swap).pack(fill="x",
+        ctk.CTkButton(grp3, text="🔄 交换键值对", fg_color="#E1AD01", command=self.json_swap).pack(fill="x",
                                                                                                              padx=10,
                                                                                                              pady=5)
 
@@ -699,7 +790,23 @@ class App(ctk.CTk):
             self._try_autosave()
 
     # =========================================================================
-    # Tab 4: 全局设置
+    # Tab 4: AI抽卡机
+    # =========================================================================
+
+    # 增加 _ui_prompt 初始化逻辑
+    def _ui_prompt(self):
+        container = ctk.CTkFrame(self.main_area, fg_color="transparent")
+        container.grid_rowconfigure(0, weight=1)
+        container.grid_columnconfigure(0, weight=1)
+
+        # [修改] 传递 self.config
+        # 注意：这里我们保存 panel 的引用，方便后续销毁重建
+        self.prompt_panel_instance = PromptPanel(container, self.config)
+
+        return container
+
+    # =========================================================================
+    # Tab 5: 全局设置
     # =========================================================================
     def _ui_setting(self):
         frame = ctk.CTkScrollableFrame(self.main_area, fg_color="transparent")
@@ -709,7 +816,11 @@ class App(ctk.CTk):
                        ("bandizip_path", "Bandizip.exe", "file"), ("max_workers", "线程数", None)])
 
         self._set_grp(frame, "图片转换", [("icon_output_path", "Icon输出位置", "dir")])
-
+        # [新增] AI 抽卡机设置组
+        self._set_grp(frame, "AI 提示词抽卡", [
+            ("prompt_data_path", "Data 数据源目录", "dir"),
+            ("prompt_preset_path", "Presets 预设目录", "dir")
+        ])
         self._set_grp(frame, "JSON 编辑器", [("json_work_dir", "默认工作目录", "dir")])
 
         ctk.CTkButton(frame, text="💾 保存所有设置", height=45, fg_color="#6C5CE7", font=("", 14, "bold"),
@@ -743,14 +854,31 @@ class App(ctk.CTk):
             "winrar_path": self.e_winrar_path.get(),
             "bandizip_path": self.e_bandizip_path.get(),
             "icon_output_path": self.e_icon_output_path.get(),
-            "json_work_dir": self.e_json_work_dir.get()
+            "json_work_dir": self.e_json_work_dir.get(),
+            # [新增] 保存抽卡机路径
+            "prompt_data_path": self.e_prompt_data_path.get(),
+            "prompt_preset_path": self.e_prompt_preset_path.get()
         })
         try:
             self.config["max_workers"] = int(self.e_max_workers.get())
         except:
             pass
+        # 2. 持久化保存
         self.cfg_mgr.save_config(self.config)
-        self._refresh_preview_list()
+
+        # 3. 刷新 UI
+        self._refresh_preview_list()  # 刷新 Icon 列表
+
+        # [新增] 强制刷新 PromptPanel 以应用新路径
+        # 逻辑：销毁旧的 Panel 实例，使用新 Config 创建一个新的
+        if hasattr(self, 'frame_prompt'):
+            for widget in self.frame_prompt.winfo_children():
+                widget.destroy()
+
+            # 重新实例化 (传入更新后的 self.config)
+            self.prompt_panel_instance = PromptPanel(self.frame_prompt, self.config)
+            # 注意：PromptPanel 内部会自动 pack，不需要这里再 pack
+
         messagebox.showinfo("提示", "设置已保存")
 
     def _browse(self, e, t):
